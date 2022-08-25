@@ -306,7 +306,7 @@ int _FLASH_OB_Lock(void)
   return 0;
 }
 
-int _FLASH_WaitForLastOperation(uint32_t Timeout)
+int _FLASH_WaitForLastOperation(uint32_t Timeout, uint32_t Bank)
 {
   /* Wait for the FLASH operation to complete by polling on QW flag to be reset.
      Even if the FLASH operation fails, the QW flag will be reset and an error
@@ -316,61 +316,130 @@ int _FLASH_WaitForLastOperation(uint32_t Timeout)
   uint32_t tickstart;
 
   tickstart = Timeout;
-  while(READ_BIT(FLASH->SR1, FLASH_FLAG_QW_BANK1) == FLASH_FLAG_QW_BANK1)
+  if(Bank == FLASH_BANK_1)
   {
-    LL_mDelay(1);
-
-    if(tickstart-- == 0)
+    while(READ_BIT(FLASH->SR1, FLASH_FLAG_QW_BANK1) == FLASH_FLAG_QW_BANK1)
     {
-      return -1;
+      LL_mDelay(1);
+
+      if(tickstart-- == 0)
+      {
+        return -1;
+      }
+    }
+  }
+  else
+  {
+    while(READ_BIT(FLASH->SR2, FLASH_FLAG_QW_BANK2) == FLASH_FLAG_QW_BANK2)
+    {
+      LL_mDelay(1);
+
+      if(tickstart-- == 0)
+      {
+        return -1;
+      }
     }
   }
 
+
   /* Get Error Flags */
-  errorflag = FLASH->SR1 & FLASH_FLAG_ALL_ERRORS_BANK1;
+  if (Bank == FLASH_BANK_1)
+  {
+    errorflag = FLASH->SR1 & FLASH_FLAG_ALL_ERRORS_BANK1;
+  }
+  else
+  {
+    errorflag = (FLASH->SR2 & FLASH_FLAG_ALL_ERRORS_BANK2) | 0x80000000U;
+  }
 
   /* In case of error reported in Flash SR1 or SR2 register */
   if((errorflag & 0x7FFFFFFFU) != 0U)
   {
     /* Clear error programming flags */
-    WRITE_REG(FLASH->CCR1, errorflag);
+    if(Bank == FLASH_BANK_1)
+    {
+      WRITE_REG(FLASH->CCR1, errorflag);
+    }
+    else
+    {
+      WRITE_REG(FLASH->CCR2, errorflag);
+    }
     return -1;
   }
 
   /* Check FLASH End of Operation flag  */
-  if(READ_BIT(FLASH->SR1, FLASH_FLAG_EOP_BANK1) == FLASH_FLAG_EOP_BANK1)
+  if(Bank == FLASH_BANK_1)
   {
-    /* Clear FLASH End of Operation pending bit */
-    WRITE_REG(FLASH->CCR1, FLASH_FLAG_EOP_BANK1);
+    if(READ_BIT(FLASH->SR1, FLASH_FLAG_EOP_BANK1) == FLASH_FLAG_EOP_BANK1)
+    {
+      /* Clear FLASH End of Operation pending bit */
+      WRITE_REG(FLASH->CCR1, FLASH_FLAG_EOP_BANK1);
+    }
+  }
+  else
+  {
+    if(READ_BIT(FLASH->SR2, FLASH_FLAG_EOP_BANK2) == FLASH_FLAG_EOP_BANK2)
+    {
+      /* Clear FLASH End of Operation pending bit */
+      WRITE_REG(FLASH->CCR2, FLASH_FLAG_EOP_BANK2);
+    }
   }
 
   return 0;
 }
 
-int _FLASH_CRC_WaitForLastOperation(uint32_t Timeout)
+int _FLASH_CRC_WaitForLastOperation(uint32_t Timeout, uint32_t Bank)
 {
   uint32_t tickstart;
 
   /* Select bsyflag depending on Bank */
   /* Wait for the FLASH CRC computation to complete by polling on CRC_BUSY flag to be reset */
   tickstart = Timeout;
-  while(READ_BIT(FLASH->SR1, FLASH_FLAG_CRC_BUSY_BANK1) == FLASH_FLAG_CRC_BUSY_BANK1)
+  if(Bank == FLASH_BANK_1)
   {
-    LL_mDelay(1);
-
-    if(tickstart-- == 0)
+    while(READ_BIT(FLASH->SR1, FLASH_FLAG_CRC_BUSY_BANK1) == FLASH_FLAG_CRC_BUSY_BANK1)
     {
-      return -1;
+      LL_mDelay(1);
+
+      if(tickstart-- == 0)
+      {
+        return -1;
+      }
+    }
+  }
+  else
+  {
+    while(READ_BIT(FLASH->SR2, FLASH_FLAG_CRC_BUSY_BANK2) == FLASH_FLAG_CRC_BUSY_BANK2)
+    {
+      LL_mDelay(1);
+
+      if(tickstart-- == 0)
+      {
+        return -1;
+      }
     }
   }
 
   /* Check FLASH CRC read error flag  */
-  if(READ_BIT(FLASH->SR1, FLASH_FLAG_CRCRDERR_BANK1) == FLASH_FLAG_CRCRDERR_BANK1)
+  if(Bank == FLASH_BANK_1)
   {
-    /* Clear FLASH CRC read error pending bit */
-    WRITE_REG(FLASH->CCR1, FLASH_FLAG_CRCRDERR_BANK1);
+    if(READ_BIT(FLASH->SR1, FLASH_FLAG_CRCRDERR_BANK1) == FLASH_FLAG_CRCRDERR_BANK1)
+    {
+      /* Clear FLASH CRC read error pending bit */
+      WRITE_REG(FLASH->CCR1, FLASH_FLAG_CRCRDERR_BANK1);
 
-    return -1;
+      return -1;
+    }
+  }
+  else
+  {
+    if(READ_BIT(FLASH->SR2, FLASH_FLAG_CRCRDERR_BANK2) == FLASH_FLAG_CRCRDERR_BANK2)
+    {
+      /* Clear FLASH CRC read error pending bit */
+      WRITE_REG(FLASH->CCR2, FLASH_FLAG_CRCRDERR_BANK2);
+
+      return -1;
+    }
   }
 
   return 0;
@@ -424,14 +493,19 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
   if((UserConfig&FLASH_OPTSR_BCM7) == FLASH_OPTSR_BCM7)
   {
-    UserConfig &= ~FLASH_OPTSR_BCM7;
+    UserConfig &= ~FLASH_OPTSR_BCM7;  //Disable M7 after system reset
   }
   else
   {
-    UserConfig |= FLASH_OPTSR_BCM7;
+    UserConfig |= FLASH_OPTSR_BCM7;   //Enable M7 after system reset
   }
 
-  if(_FLASH_WaitForLastOperation((uint32_t)50000) != 0)
+  if(_FLASH_WaitForLastOperation((uint32_t)50000, FLASH_BANK_1) != 0)
+  {
+    Error_Handler();
+  }
+
+  if(_FLASH_WaitForLastOperation((uint32_t)50000, FLASH_BANK_2) != 0)
   {
     Error_Handler();
   }
@@ -442,7 +516,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   MODIFY_REG(FLASH->OPTSR_PRG, optr_reg_mask, optr_reg_val);
 
   /* Wait for CRC computation to be completed */
-  if (_FLASH_CRC_WaitForLastOperation((uint32_t)50000) != 0)
+  if (_FLASH_CRC_WaitForLastOperation((uint32_t)50000, FLASH_BANK_1) != 0)
+  {
+    Error_Handler();
+  }
+  else if (_FLASH_CRC_WaitForLastOperation((uint32_t)50000, FLASH_BANK_2) != 0)
   {
     Error_Handler();
   }
